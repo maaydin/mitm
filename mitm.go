@@ -15,10 +15,7 @@ import (
 // for incoming TLS connections in place of the upstream server's
 // certificate.
 type Proxy struct {
-	// Wrap specifies a function for optionally wrapping upstream for
-	// inspecting the decrypted HTTP request and response.
-	Wrap func(upstream http.Handler) http.Handler
-
+	Analyze func(RequestStat) 
 	// CA specifies the root CA for generating leaf certs for each incoming
 	// TLS request.
 	CA *tls.Certificate
@@ -38,16 +35,58 @@ type Proxy struct {
 	FlushInterval time.Duration
 }
 
+type RequestStat struct {
+	Method string
+	Scheme string
+	Host string
+	Path string
+	StatusCode int
+	StartTime time.Time
+	EndTime time.Time
+	ElapsedTime int64
+}
+
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "CONNECT" {
 		p.serveConnect(w, r)
 		return
 	}
+
+	tp := transport{&http.Transport{}, RequestStat{}}
+
 	rp := &httputil.ReverseProxy{
 		Director:      httpDirector,
+		Transport:     &tp,
 		FlushInterval: p.FlushInterval,
 	}
-	p.Wrap(rp).ServeHTTP(w, r)
+
+	rp.ServeHTTP(w, r)
+
+	tp.rr.EndTime = time.Now()
+	tp.rr.ElapsedTime = (tp.rr.EndTime.UnixNano() - tp.rr.StartTime.UnixNano())/1000000
+	p.Analyze(tp.rr)
+}
+
+type transport struct {
+    rt http.RoundTripper
+    rr RequestStat
+}
+
+func (t *transport) RoundTrip(req *http.Request) (resp *http.Response, err error) {
+
+	t.rr.Method = req.Method
+	t.rr.Scheme = req.URL.Scheme
+	t.rr.Host = req.URL.Host
+	t.rr.Path = req.URL.Path
+	t.rr.StartTime = time.Now()
+
+    resp, err = t.rt.RoundTrip(req)
+
+    if resp != nil {
+		t.rr.StatusCode = resp.StatusCode
+	}
+
+    return resp, err
 }
 
 func (p *Proxy) serveConnect(w http.ResponseWriter, r *http.Request) {
@@ -101,16 +140,23 @@ func (p *Proxy) serveConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	defer sconn.Close()
 
+
 	od := &oneShotDialer{c: sconn}
+	tp := transport{&http.Transport{DialTLS: od.Dial}, RequestStat{}}
+
 	rp := &httputil.ReverseProxy{
 		Director:      httpsDirector,
-		Transport:     &http.Transport{DialTLS: od.Dial},
+		Transport:     &tp,
 		FlushInterval: p.FlushInterval,
 	}
-
 	ch := make(chan int)
-	wc := &onCloseConn{cconn, func() { ch <- 0 }}
-	http.Serve(&oneShotListener{wc}, p.Wrap(rp))
+	wc := &onCloseConn{cconn, func() {
+			ch <- 0 
+			tp.rr.EndTime = time.Now()
+			tp.rr.ElapsedTime = (tp.rr.EndTime.UnixNano() - tp.rr.StartTime.UnixNano())/1000000
+			p.Analyze(tp.rr)
+		}}
+	http.Serve(&oneShotListener{wc}, rp)
 	<-ch
 }
 
