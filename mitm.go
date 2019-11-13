@@ -52,7 +52,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tp := transport{&http.Transport{}, RequestStat{}}
+	tp := transport{&http.Transport{DialContext: (&net.Dialer{
+				Timeout:   90 * time.Second,
+				KeepAlive: 90 * time.Second,
+				DualStack: true,
+			}).DialContext,
+			TLSHandshakeTimeout: 30 * time.Second,}, RequestStat{}}
 
 	rp := &httputil.ReverseProxy{
 		Director:      httpDirector,
@@ -140,9 +145,14 @@ func (p *Proxy) serveConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	defer sconn.Close()
 
-
 	od := &oneShotDialer{c: sconn}
-	tp := transport{&http.Transport{DialTLS: od.Dial}, RequestStat{}}
+	tp := transport{&http.Transport{DialContext: (&net.Dialer{
+				Timeout:   90 * time.Second,
+				KeepAlive: 90 * time.Second,
+				DualStack: true,
+			}).DialContext,
+			DialTLS: od.Dial,
+		}, RequestStat{}}
 
 	rp := &httputil.ReverseProxy{
 		Director:      httpsDirector,
