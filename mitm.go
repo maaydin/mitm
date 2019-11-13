@@ -57,7 +57,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				KeepAlive: 90 * time.Second,
 				DualStack: true,
 			}).DialContext,
-			TLSHandshakeTimeout: 30 * time.Second,}, RequestStat{}}
+			TLSHandshakeTimeout: 30 * time.Second,
+			MaxIdleConns: 64,
+			MaxIdleConnsPerHost: 8,
+		}, RequestStat{}}
 
 	rp := &httputil.ReverseProxy{
 		Director:      httpDirector,
@@ -152,6 +155,9 @@ func (p *Proxy) serveConnect(w http.ResponseWriter, r *http.Request) {
 				DualStack: true,
 			}).DialContext,
 			DialTLS: od.Dial,
+			TLSHandshakeTimeout: 30 * time.Second,
+			MaxIdleConns: 64,
+			MaxIdleConnsPerHost: 8,
 		}, RequestStat{}}
 
 	rp := &httputil.ReverseProxy{
